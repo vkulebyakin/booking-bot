@@ -154,12 +154,13 @@ def slots():
 def book():
     data = request.json
     name = (data.get("name") or "").strip()
-    contact = (data.get("contact") or "").strip()
+    phone = (data.get("phone") or "").strip()
+    telegram = (data.get("telegram") or "").strip()
     date_str = (data.get("date") or "").strip()
     time_str = (data.get("time") or "").strip()
     comment = (data.get("comment") or "").strip()
 
-    if not all([name, contact, date_str, time_str]):
+    if not all([name, phone, date_str, time_str]):
         return jsonify({"success": False, "error": "Заполните все поля"}), 400
 
     # Double-check slot is still free
@@ -168,6 +169,7 @@ def book():
         return jsonify({"success": False, "error": "Этот слот уже занят, выберите другое время"}), 409
 
     # Create event in Yandex Calendar
+    contact = phone + (f" / {telegram}" if telegram else "")
     create_event(date_str, time_str, name, contact, comment)
 
     # Notify owner in Telegram
@@ -183,7 +185,11 @@ def book():
     message = (
         f"📅 <b>Новая запись!</b>\n\n"
         f"👤 <b>Имя:</b> {name}\n"
-        f"📞 <b>Контакт:</b> {contact}\n"
+        f"📞 <b>Телефон:</b> {phone}\n"
+    )
+    if telegram:
+        message += f"✈️ <b>Telegram:</b> {telegram}\n"
+    message += (
         f"📆 <b>Дата:</b> {friendly}\n"
         f"🕐 <b>Время:</b> {time_str}\n"
     )

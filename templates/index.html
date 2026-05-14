@@ -205,10 +205,17 @@
     <input type="text" id="name" placeholder="Иван Иванов" autocomplete="name" />
   </div>
 
-  <!-- Контакт -->
+  <!-- Телефон -->
   <div class="section">
-    <label>Телефон или Telegram</label>
-    <input type="tel" id="contact" placeholder="+7 900 000-00-00 или @username" />
+    <label>Номер телефона <span style="color:#e53935">*</span></label>
+    <input type="tel" id="phone" placeholder="+7 900 000-00-00" autocomplete="tel" />
+    <div id="phoneError" style="display:none;color:#e53935;font-size:13px;margin-top:6px;"></div>
+  </div>
+
+  <!-- Telegram -->
+  <div class="section">
+    <label>Telegram (необязательно)</label>
+    <input type="text" id="telegram" placeholder="@username" autocomplete="off" />
   </div>
 
   <!-- Календарь -->
@@ -255,6 +262,23 @@
   let selectedDate = null;
   let selectedTime = null;
   let currentYear, currentMonth;
+
+  function validatePhone(raw) {
+    const digits = raw.replace(/\D/g, "");
+    if (digits.length < 10) return { ok: false, msg: "Номер слишком короткий — минимум 10 цифр" };
+    if (digits.length > 15) return { ok: false, msg: "Номер слишком длинный" };
+    return { ok: true };
+  }
+
+  function formatPhone(raw) {
+    // Normalize +8 → +7 for Russian numbers
+    let digits = raw.replace(/\D/g, "");
+    if (digits.startsWith("8") && digits.length === 11) digits = "7" + digits.slice(1);
+    if (digits.startsWith("7") && digits.length === 11) {
+      return `+7 ${digits.slice(1,4)} ${digits.slice(4,7)}-${digits.slice(7,9)}-${digits.slice(9,11)}`;
+    }
+    return raw.trim();
+  }
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -376,9 +400,11 @@
   }
 
   function updateMainButton() {
+    const phone = document.getElementById("phone").value.trim();
+    const phoneOk = validatePhone(phone).ok;
     const ready = selectedDate && selectedTime &&
       document.getElementById("name").value.trim() &&
-      document.getElementById("contact").value.trim();
+      phoneOk;
 
     if (tg?.MainButton) {
       if (ready) {
@@ -395,13 +421,26 @@
 
   async function submit() {
     const name = document.getElementById("name").value.trim();
-    const contact = document.getElementById("contact").value.trim();
+    const phone = document.getElementById("phone").value.trim();
+    const telegram = document.getElementById("telegram").value.trim();
     const comment = document.getElementById("comment").value.trim();
 
-    if (!name || !contact || !selectedDate || !selectedTime) {
-      alert("Пожалуйста, заполните все поля и выберите время.");
+    // Validate phone
+    const phoneCheck = validatePhone(phone);
+    const phoneError = document.getElementById("phoneError");
+    if (!phoneCheck.ok) {
+      phoneError.textContent = phoneCheck.msg;
+      phoneError.style.display = "block";
       return;
     }
+    phoneError.style.display = "none";
+
+    if (!name || !selectedDate || !selectedTime) {
+      alert("Пожалуйста, заполните имя и выберите время.");
+      return;
+    }
+
+    const formattedPhone = formatPhone(phone);
 
     if (tg?.MainButton) {
       tg.MainButton.setText("Отправляем...");
@@ -412,7 +451,7 @@
       const res = await fetch("/book", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, contact, date: selectedDate, time: selectedTime, comment }),
+        body: JSON.stringify({ name, phone: formattedPhone, telegram, date: selectedDate, time: selectedTime, comment }),
       });
       const data = await res.json();
 
@@ -447,7 +486,11 @@
   document.getElementById("submitBtn").addEventListener("click", submit);
 
   document.getElementById("name").addEventListener("input", updateMainButton);
-  document.getElementById("contact").addEventListener("input", updateMainButton);
+  document.getElementById("phone").addEventListener("input", () => {
+    const phoneError = document.getElementById("phoneError");
+    phoneError.style.display = "none";
+    updateMainButton();
+  });
 
   document.getElementById("prevMonth").addEventListener("click", () => {
     if (currentMonth === 0) { currentMonth = 11; currentYear--; }
