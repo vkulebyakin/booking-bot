@@ -126,6 +126,23 @@ def create_event(date_str, time_str, name, contact, comment):
         return False
 
 
+@app.route("/debug/caldav")
+def debug_caldav():
+    try:
+        import caldav
+        client = caldav.DAVClient(
+            url=f"https://caldav.yandex.ru/calendars/{YANDEX_LOGIN}/",
+            username=YANDEX_LOGIN,
+            password=YANDEX_PASSWORD,
+        )
+        principal = client.principal()
+        calendars = principal.calendars()
+        names = [str(c.name) for c in calendars]
+        return jsonify({"ok": True, "calendars": names, "login": YANDEX_LOGIN})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "login": YANDEX_LOGIN})
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
