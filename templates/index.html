@@ -208,7 +208,7 @@
   <!-- Телефон -->
   <div class="section">
     <label>Номер телефона <span style="color:#e53935">*</span></label>
-    <input type="tel" id="phone" placeholder="+7 900 000-00-00" autocomplete="tel" />
+    <input type="tel" id="phone" placeholder="+7 900 000-00-00" autocomplete="tel" inputmode="numeric" />
     <div id="phoneError" style="display:none;color:#e53935;font-size:13px;margin-top:6px;"></div>
   </div>
 
@@ -263,20 +263,35 @@
   let selectedTime = null;
   let currentYear, currentMonth;
 
-  function validatePhone(raw) {
-    const digits = raw.replace(/\D/g, "");
+  // Форматирование телефона: только цифры, макс 15, живой формат
+  function applyPhoneMask(input) {
+    let digits = input.value.replace(/\D/g, "");
+    // Нормализуем: 8 → 7 для российских номеров
+    if (digits.startsWith("8")) digits = "7" + digits.slice(1);
+    // Ограничиваем 15 цифрами (международный стандарт E.164)
+    digits = digits.slice(0, 15);
+    // Форматируем российский номер: 11 цифр, начинается с 7
+    let formatted = "";
+    if (digits.startsWith("7")) {
+      const d = digits;
+      formatted = "+7";
+      if (d.length > 1)  formatted += " " + d.slice(1, 4);
+      if (d.length > 4)  formatted += " " + d.slice(4, 7);
+      if (d.length > 7)  formatted += "-" + d.slice(7, 9);
+      if (d.length > 9)  formatted += "-" + d.slice(9, 11);
+    } else {
+      formatted = digits ? "+" + digits : "";
+    }
+    input.value = formatted;
+  }
+
+  function validatePhone(input) {
+    const digits = input.replace(/\D/g, "");
     if (digits.length < 10) return { ok: false, msg: "Номер слишком короткий — минимум 10 цифр" };
-    if (digits.length > 15) return { ok: false, msg: "Номер слишком длинный" };
     return { ok: true };
   }
 
   function formatPhone(raw) {
-    // Normalize +8 → +7 for Russian numbers
-    let digits = raw.replace(/\D/g, "");
-    if (digits.startsWith("8") && digits.length === 11) digits = "7" + digits.slice(1);
-    if (digits.startsWith("7") && digits.length === 11) {
-      return `+7 ${digits.slice(1,4)} ${digits.slice(4,7)}-${digits.slice(7,9)}-${digits.slice(9,11)}`;
-    }
     return raw.trim();
   }
 
@@ -427,6 +442,7 @@
 
     // Validate phone
     const phoneCheck = validatePhone(phone);
+
     const phoneError = document.getElementById("phoneError");
     if (!phoneCheck.ok) {
       phoneError.textContent = phoneCheck.msg;
@@ -486,9 +502,24 @@
   document.getElementById("submitBtn").addEventListener("click", submit);
 
   document.getElementById("name").addEventListener("input", updateMainButton);
-  document.getElementById("phone").addEventListener("input", () => {
-    const phoneError = document.getElementById("phoneError");
-    phoneError.style.display = "none";
+  const phoneInput = document.getElementById("phone");
+  phoneInput.addEventListener("keydown", (e) => {
+    // Разрешаем: цифры, backspace, delete, стрелки, tab, +
+    const allowed = ["Backspace","Delete","ArrowLeft","ArrowRight","Tab","Home","End"];
+    if (allowed.includes(e.key)) return;
+    if (e.key === "+" && phoneInput.value === "") return;
+    if (!/^\d$/.test(e.key)) e.preventDefault();
+  });
+  phoneInput.addEventListener("input", () => {
+    applyPhoneMask(phoneInput);
+    document.getElementById("phoneError").style.display = "none";
+    updateMainButton();
+  });
+  phoneInput.addEventListener("paste", (e) => {
+    e.preventDefault();
+    const pasted = (e.clipboardData || window.clipboardData).getData("text");
+    phoneInput.value = pasted;
+    applyPhoneMask(phoneInput);
     updateMainButton();
   });
 
