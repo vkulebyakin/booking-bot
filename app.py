@@ -1,36 +1,27 @@
 import os
-import json
+import uuid
 import requests
 from flask import Flask, render_template, request, jsonify
-from datetime import datetime, date
+from datetime import datetime, timedelta, date
+import pytz
 
 app = Flask(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 OWNER_CHAT_ID = os.environ.get("OWNER_CHAT_ID", "")
-BOOKINGS_FILE = "bookings.json"
+YANDEX_LOGIN = os.environ.get("YANDEX_LOGIN", "")
+YANDEX_PASSWORD = os.environ.get("YANDEX_PASSWORD", "")
+CALDAV_URL = f"https://caldav.yandex.ru/calendars/{YANDEX_LOGIN}/"
 
+TZ = pytz.timezone("Europe/Moscow")
 WORK_START = 9
 WORK_END = 18
 SLOT_MINUTES = 30
 
 
-def load_bookings():
-    if not os.path.exists(BOOKINGS_FILE):
-        return {}
-    with open(BOOKINGS_FILE, "r") as f:
-        return json.load(f)
-
-
-def save_bookings(bookings):
-    with open(BOOKINGS_FILE, "w") as f:
-        json.dump(bookings, f, ensure_ascii=False, indent=2)
-
-
 def generate_slots():
     slots = []
-    hour = WORK_START
-    minute = 0
+    hour, minute = WORK_START, 0
     while hour * 60 + minute < WORK_END * 60:
         slots.append(f"{hour:02d}:{minute:02d}")
         minute += SLOT_MINUTES
@@ -38,6 +29,101 @@ def generate_slots():
             minute -= 60
             hour += 1
     return slots
+
+
+def get_caldav_client():
+    import caldav
+    return caldav.DAVClient(
+        url=CALDAV_URL,
+        username=YANDEX_LOGIN,
+        password=YANDEX_PASSWORD,
+    )
+
+
+def get_calendar():
+    client = get_caldav_client()
+    principal = client.principal()
+    calendars = principal.calendars()
+    if not calendars:
+        raise RuntimeError("Нет доступных календарей")
+    return calendars[0]
+
+
+def to_aware(dt, fallback_date=None):
+    """Convert date or naive datetime to Moscow-aware datetime."""
+    if isinstance(dt, datetime):
+        if dt.tzinfo is None:
+            return TZ.localize(dt)
+        return dt.astimezone(TZ)
+    # all-day event (date object)
+    return TZ.localize(datetime.combine(dt, datetime.min.time()))
+
+
+def get_busy_slots(date_str):
+    try:
+        from icalendar import Calendar as iCal
+
+        parsed_date = datetime.strptime(date_str, "%Y-%m-%d")
+        day_start = TZ.localize(parsed_date.replace(hour=0, minute=0, second=0))
+        day_end = TZ.localize(parsed_date.replace(hour=23, minute=59, second=59))
+
+        calendar = get_calendar()
+        events = calendar.date_search(start=day_start, end=day_end, expand=True)
+
+        busy = set()
+        all_slots = generate_slots()
+
+        for event in events:
+            cal = iCal.from_ical(event.data)
+            for comp in cal.walk():
+                if comp.name != "VEVENT":
+                    continue
+                dtstart = to_aware(comp.get("DTSTART").dt)
+                dtend = to_aware(comp.get("DTEND").dt)
+
+                for slot in all_slots:
+                    h, m = map(int, slot.split(":"))
+                    slot_start = TZ.localize(parsed_date.replace(hour=h, minute=m, second=0))
+                    slot_end = slot_start + timedelta(minutes=SLOT_MINUTES)
+                    if slot_start < dtend and slot_end > dtstart:
+                        busy.add(slot)
+
+        return list(busy)
+    except Exception as e:
+        print(f"[CalDAV read error] {e}")
+        return []
+
+
+def create_event(date_str, time_str, name, contact, comment):
+    try:
+        from icalendar import Calendar as iCal, Event
+
+        parsed = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+        dtstart = TZ.localize(parsed)
+        dtend = dtstart + timedelta(minutes=SLOT_MINUTES)
+
+        cal = iCal()
+        cal.add("prodid", "-//Booking Bot//RU")
+        cal.add("version", "2.0")
+
+        ev = Event()
+        ev.add("uid", str(uuid.uuid4()))
+        ev.add("summary", f"Встреча: {name}")
+        description = f"Контакт: {contact}"
+        if comment:
+            description += f"\n{comment}"
+        ev.add("description", description)
+        ev.add("dtstart", dtstart)
+        ev.add("dtend", dtend)
+        ev.add("dtstamp", datetime.now(TZ))
+        cal.add_component(ev)
+
+        calendar = get_calendar()
+        calendar.save_event(cal.to_ical().decode("utf-8"))
+        return True
+    except Exception as e:
+        print(f"[CalDAV write error] {e}")
+        return False
 
 
 @app.route("/")
@@ -59,9 +145,8 @@ def slots():
     if parsed.weekday() >= 5:
         return jsonify({"slots": []})
 
-    bookings = load_bookings()
-    booked = bookings.get(date_str, [])
-    available = [s for s in generate_slots() if s not in booked]
+    busy = get_busy_slots(date_str)
+    available = [s for s in generate_slots() if s not in busy]
     return jsonify({"slots": available})
 
 
@@ -77,30 +162,29 @@ def book():
     if not all([name, contact, date_str, time_str]):
         return jsonify({"success": False, "error": "Заполните все поля"}), 400
 
-    bookings = load_bookings()
-    booked = bookings.get(date_str, [])
+    # Double-check slot is still free
+    busy = get_busy_slots(date_str)
+    if time_str in busy:
+        return jsonify({"success": False, "error": "Этот слот уже занят, выберите другое время"}), 409
 
-    if time_str in booked:
-        return jsonify({"success": False, "error": "Этот слот уже занят"}), 409
+    # Create event in Yandex Calendar
+    create_event(date_str, time_str, name, contact, comment)
 
-    booked.append(time_str)
-    bookings[date_str] = booked
-    save_bookings(bookings)
-
+    # Notify owner in Telegram
     try:
         parsed_date = datetime.strptime(date_str, "%Y-%m-%d")
-        months = ["января", "февраля", "марта", "апреля", "мая", "июня",
-                  "июля", "августа", "сентября", "октября", "ноября", "декабря"]
-        days = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-        friendly_date = f"{days[parsed_date.weekday()]}, {parsed_date.day} {months[parsed_date.month - 1]}"
+        months = ["января","февраля","марта","апреля","мая","июня",
+                  "июля","августа","сентября","октября","ноября","декабря"]
+        days = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"]
+        friendly = f"{days[parsed_date.weekday()]}, {parsed_date.day} {months[parsed_date.month - 1]}"
     except Exception:
-        friendly_date = date_str
+        friendly = date_str
 
     message = (
         f"📅 <b>Новая запись!</b>\n\n"
         f"👤 <b>Имя:</b> {name}\n"
         f"📞 <b>Контакт:</b> {contact}\n"
-        f"📆 <b>Дата:</b> {friendly_date}\n"
+        f"📆 <b>Дата:</b> {friendly}\n"
         f"🕐 <b>Время:</b> {time_str}\n"
     )
     if comment:
