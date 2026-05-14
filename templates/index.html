@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Записаться на встречу</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--tg-theme-bg-color, #f5f5f5);
+      color: var(--tg-theme-text-color, #222);
+      min-height: 100vh;
+      padding: 16px;
+    }
+
+    h1 {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+
+    .section {
+      background: var(--tg-theme-secondary-bg-color, #fff);
+      border-radius: 14px;
+      padding: 16px;
+      margin-bottom: 14px;
+    }
+
+    .section label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      opacity: 0.5;
+      margin-bottom: 8px;
+    }
+
+    input[type="text"], input[type="tel"], textarea {
+      width: 100%;
+      border: none;
+      background: transparent;
+      font-size: 16px;
+      color: var(--tg-theme-text-color, #222);
+      outline: none;
+      resize: none;
+    }
+
+    textarea { height: 60px; }
+
+    /* Calendar */
+    .calendar-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .calendar-header span {
+      font-weight: 600;
+      font-size: 16px;
+    }
+
+    .nav-btn {
+      background: none;
+      border: none;
+      font-size: 20px;
+      cursor: pointer;
+      color: var(--tg-theme-button-color, #3390ec);
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+    }
+
+    .nav-btn:disabled { opacity: 0.3; cursor: default; }
+
+    .weekdays {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      text-align: center;
+      font-size: 12px;
+      opacity: 0.5;
+      margin-bottom: 6px;
+    }
+
+    .days {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 4px;
+    }
+
+    .day {
+      aspect-ratio: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      font-size: 15px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .day.empty { cursor: default; }
+    .day.past, .day.weekend { opacity: 0.25; cursor: default; }
+    .day.today { font-weight: 700; }
+
+    .day.available:hover {
+      background: rgba(51, 144, 236, 0.15);
+    }
+
+    .day.selected {
+      background: var(--tg-theme-button-color, #3390ec);
+      color: var(--tg-theme-button-text-color, #fff);
+    }
+
+    /* Slots */
+    .slots-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+
+    .slot {
+      padding: 10px 4px;
+      text-align: center;
+      border-radius: 10px;
+      font-size: 14px;
+      cursor: pointer;
+      background: var(--tg-theme-bg-color, #f0f0f0);
+      transition: background 0.15s;
+      font-weight: 500;
+    }
+
+    .slot:hover {
+      background: rgba(51, 144, 236, 0.15);
+    }
+
+    .slot.selected {
+      background: var(--tg-theme-button-color, #3390ec);
+      color: var(--tg-theme-button-text-color, #fff);
+    }
+
+    .no-slots {
+      text-align: center;
+      opacity: 0.5;
+      font-size: 14px;
+      padding: 12px 0;
+    }
+
+    .loading {
+      text-align: center;
+      opacity: 0.5;
+      font-size: 14px;
+      padding: 12px 0;
+    }
+
+    /* Submit button (fallback if not in Telegram) */
+    #submitBtn {
+      display: none;
+      width: 100%;
+      padding: 16px;
+      background: var(--tg-theme-button-color, #3390ec);
+      color: var(--tg-theme-button-text-color, #fff);
+      border: none;
+      border-radius: 14px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 4px;
+    }
+
+    .success {
+      text-align: center;
+      padding: 40px 20px;
+    }
+
+    .success .icon { font-size: 60px; margin-bottom: 16px; }
+    .success h2 { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
+    .success p { opacity: 0.6; font-size: 15px; }
+
+    .hint {
+      text-align: center;
+      font-size: 13px;
+      opacity: 0.45;
+      margin-top: -6px;
+      margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+
+<div id="app">
+  <h1>Записаться на встречу</h1>
+
+  <!-- Имя -->
+  <div class="section">
+    <label>Ваше имя</label>
+    <input type="text" id="name" placeholder="Иван Иванов" autocomplete="name" />
+  </div>
+
+  <!-- Контакт -->
+  <div class="section">
+    <label>Телефон или Telegram</label>
+    <input type="tel" id="contact" placeholder="+7 900 000-00-00 или @username" />
+  </div>
+
+  <!-- Календарь -->
+  <div class="section">
+    <div class="calendar-header">
+      <button class="nav-btn" id="prevMonth">‹</button>
+      <span id="monthLabel"></span>
+      <button class="nav-btn" id="nextMonth">›</button>
+    </div>
+    <div class="weekdays">
+      <div>Пн</div><div>Вт</div><div>Ср</div><div>Чт</div><div>Пт</div>
+      <div style="color:#e53935">Сб</div><div style="color:#e53935">Вс</div>
+    </div>
+    <div class="days" id="daysGrid"></div>
+  </div>
+
+  <p class="hint" id="selectDateHint">Выберите дату выше</p>
+
+  <!-- Слоты -->
+  <div class="section" id="slotsSection" style="display:none">
+    <label id="slotsLabel">Доступное время</label>
+    <div id="slotsContainer"></div>
+  </div>
+
+  <!-- Комментарий -->
+  <div class="section" id="commentSection" style="display:none">
+    <label>Комментарий (необязательно)</label>
+    <textarea id="comment" placeholder="О чём хотите поговорить?"></textarea>
+  </div>
+
+  <button id="submitBtn">Записаться</button>
+</div>
+
+<div id="successScreen" style="display:none" class="success">
+  <div class="icon">✅</div>
+  <h2>Вы записаны!</h2>
+  <p id="successText"></p>
+</div>
+
+<script>
+  const tg = window.Telegram?.WebApp;
+  if (tg) { tg.ready(); tg.expand(); }
+
+  let selectedDate = null;
+  let selectedTime = null;
+  let currentYear, currentMonth;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  currentYear = today.getFullYear();
+  currentMonth = today.getMonth();
+
+  const MONTHS = ["Январь","Февраль","Март","Апрель","Май","Июнь",
+                  "Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
+  const MONTHS_GEN = ["января","февраля","марта","апреля","мая","июня",
+                      "июля","августа","сентября","октября","ноября","декабря"];
+
+  function renderCalendar() {
+    document.getElementById("monthLabel").textContent =
+      MONTHS[currentMonth] + " " + currentYear;
+
+    const grid = document.getElementById("daysGrid");
+    grid.innerHTML = "";
+
+    const firstDay = new Date(currentYear, currentMonth, 1);
+    const totalDays = new Date(currentYear, currentMonth + 1, 0).getDate();
+    let startDow = firstDay.getDay();
+    if (startDow === 0) startDow = 7;
+
+    for (let i = 1; i < startDow; i++) {
+      const empty = document.createElement("div");
+      empty.className = "day empty";
+      grid.appendChild(empty);
+    }
+
+    for (let d = 1; d <= totalDays; d++) {
+      const dayEl = document.createElement("div");
+      const dateObj = new Date(currentYear, currentMonth, d);
+      const dow = dateObj.getDay();
+      const isPast = dateObj < today;
+      const isWeekend = dow === 0 || dow === 6;
+      const isToday = dateObj.getTime() === today.getTime();
+      const dateStr = formatDate(currentYear, currentMonth, d);
+
+      dayEl.textContent = d;
+      dayEl.className = "day";
+
+      if (isPast || isWeekend) {
+        dayEl.classList.add(isPast ? "past" : "weekend");
+      } else {
+        dayEl.classList.add("available");
+        if (isToday) dayEl.classList.add("today");
+        if (selectedDate === dateStr) dayEl.classList.add("selected");
+        dayEl.addEventListener("click", () => selectDate(dateStr, d));
+      }
+
+      grid.appendChild(dayEl);
+    }
+
+    const prevBtn = document.getElementById("prevMonth");
+    const nowMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const curMonthStart = new Date(currentYear, currentMonth, 1);
+    prevBtn.disabled = curMonthStart <= nowMonthStart;
+  }
+
+  function formatDate(y, m, d) {
+    return `${y}-${String(m + 1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+  }
+
+  function selectDate(dateStr, day) {
+    selectedDate = dateStr;
+    selectedTime = null;
+    renderCalendar();
+    loadSlots(dateStr, day);
+  }
+
+  function loadSlots(dateStr, day) {
+    const section = document.getElementById("slotsSection");
+    const container = document.getElementById("slotsContainer");
+    const hint = document.getElementById("selectDateHint");
+    const label = document.getElementById("slotsLabel");
+
+    hint.style.display = "none";
+    section.style.display = "block";
+    document.getElementById("commentSection").style.display = "none";
+
+    const parts = dateStr.split("-");
+    const m = parseInt(parts[1]) - 1;
+    label.textContent = `${day} ${MONTHS_GEN[m]} — свободное время`;
+
+    container.innerHTML = '<div class="loading">Загружаю...</div>';
+
+    fetch(`/slots?date=${dateStr}`)
+      .then(r => r.json())
+      .then(data => {
+        container.innerHTML = "";
+        if (!data.slots || data.slots.length === 0) {
+          container.innerHTML = '<div class="no-slots">На этот день нет свободных слотов</div>';
+          return;
+        }
+        const grid = document.createElement("div");
+        grid.className = "slots-grid";
+        data.slots.forEach(time => {
+          const btn = document.createElement("div");
+          btn.className = "slot";
+          btn.textContent = time;
+          if (selectedTime === time) btn.classList.add("selected");
+          btn.addEventListener("click", () => selectTime(time, grid));
+          grid.appendChild(btn);
+        });
+        container.appendChild(grid);
+      })
+      .catch(() => {
+        container.innerHTML = '<div class="no-slots">Ошибка загрузки</div>';
+      });
+  }
+
+  function selectTime(time, grid) {
+    selectedTime = time;
+    grid.querySelectorAll(".slot").forEach(el => {
+      el.classList.toggle("selected", el.textContent === time);
+    });
+    document.getElementById("commentSection").style.display = "block";
+    updateMainButton();
+  }
+
+  function updateMainButton() {
+    const ready = selectedDate && selectedTime &&
+      document.getElementById("name").value.trim() &&
+      document.getElementById("contact").value.trim();
+
+    if (tg?.MainButton) {
+      if (ready) {
+        tg.MainButton.setText("Записаться");
+        tg.MainButton.show();
+        tg.MainButton.enable();
+      } else {
+        tg.MainButton.hide();
+      }
+    } else {
+      document.getElementById("submitBtn").style.display = ready ? "block" : "none";
+    }
+  }
+
+  async function submit() {
+    const name = document.getElementById("name").value.trim();
+    const contact = document.getElementById("contact").value.trim();
+    const comment = document.getElementById("comment").value.trim();
+
+    if (!name || !contact || !selectedDate || !selectedTime) {
+      alert("Пожалуйста, заполните все поля и выберите время.");
+      return;
+    }
+
+    if (tg?.MainButton) {
+      tg.MainButton.setText("Отправляем...");
+      tg.MainButton.disable();
+    }
+
+    try {
+      const res = await fetch("/book", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, contact, date: selectedDate, time: selectedTime, comment }),
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        const parts = selectedDate.split("-");
+        const friendlyDate = `${parseInt(parts[2])} ${MONTHS_GEN[parseInt(parts[1]) - 1]}`;
+        document.getElementById("app").style.display = "none";
+        document.getElementById("successScreen").style.display = "block";
+        document.getElementById("successText").textContent =
+          `${friendlyDate} в ${selectedTime}. Ждём вас!`;
+        if (tg?.MainButton) tg.MainButton.hide();
+        setTimeout(() => tg?.close?.(), 3000);
+      } else {
+        alert(data.error || "Что-то пошло не так. Попробуйте ещё раз.");
+        if (tg?.MainButton) {
+          tg.MainButton.setText("Записаться");
+          tg.MainButton.enable();
+        }
+      }
+    } catch {
+      alert("Ошибка сети. Проверьте подключение.");
+      if (tg?.MainButton) {
+        tg.MainButton.setText("Записаться");
+        tg.MainButton.enable();
+      }
+    }
+  }
+
+  if (tg?.MainButton) {
+    tg.MainButton.onClick(submit);
+  }
+  document.getElementById("submitBtn").addEventListener("click", submit);
+
+  document.getElementById("name").addEventListener("input", updateMainButton);
+  document.getElementById("contact").addEventListener("input", updateMainButton);
+
+  document.getElementById("prevMonth").addEventListener("click", () => {
+    if (currentMonth === 0) { currentMonth = 11; currentYear--; }
+    else currentMonth--;
+    renderCalendar();
+  });
+
+  document.getElementById("nextMonth").addEventListener("click", () => {
+    if (currentMonth === 11) { currentMonth = 0; currentYear++; }
+    else currentMonth++;
+    renderCalendar();
+  });
+
+  renderCalendar();
+</script>
+</body>
+</html>
